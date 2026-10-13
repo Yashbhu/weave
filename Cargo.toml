@@ -1,0 +1,22 @@
+[package]
+name = "weave"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Weave - a peer-to-peer Layer-3 overlay network"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "weave"
+path = "src/lib.rs"
+
+[[bin]]
+name = "weave"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
