@@ -15,14 +15,6 @@ path is dead. M7 audited the implementation, fixed several correctness and
 security defects, and added fault-injection, lifecycle, rate-limiting, fuzzing
 and benchmark coverage.
 
-See [`docs/08-m4-routing.md`](./docs/08-m4-routing.md) for static multi-hop
-routing, [`docs/09-m5-topology.md`](./docs/09-m5-topology.md) for topology
-exchange, failure detection and recovery,
-[`docs/10-m6-migration-relay.md`](./docs/10-m6-migration-relay.md) for endpoint
-migration, relay fallback and control authentication, and
-[`docs/11-m7-hardening.md`](./docs/11-m7-hardening.md) for the M7 audit,
-security review, fault injection and benchmarks.
-
 ## The transport
 
 A small UDP transport that lets two processes exchange framed messages. Each
