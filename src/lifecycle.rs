@@ -4,16 +4,6 @@
 //! module turns that into a real per-peer lifecycle with explicit states and
 //! active probing:
 //!
-//! ```text
-//!            message                silence >= suspect_after
-//!   Connected --------> (stays) ----------------------------> Suspect
-//!       ^                                                        |
-//!       |  message                            silence >= disconnect_after
-//!       |                                                        v
-//!       +------------------------------------------------ Disconnected
-//!                                    (probe with exponential backoff)
-//! ```
-//!
 //! - **Connected**: we have heard from the peer within `suspect_after`.
 //! - **Suspect**: the peer has gone quiet. we send a probe every
 //!   `probe_interval` to try to confirm it is still there.

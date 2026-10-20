@@ -1061,6 +1061,7 @@ dependencies = [
  "clap",
  "getrandom",
  "hmac",
+ "libc",
  "sha2",
  "snow",
  "tokio",

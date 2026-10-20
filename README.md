@@ -1,117 +1,197 @@
 # weave
 
-Weave is a peer-to-peer Layer-3 overlay network written in Rust. The idea is a
-virtual network on top of the physical one, so peers can exchange IP packets
-without a direct link between them.
+[![ci](https://github.com/Yashbhu/weave/actions/workflows/ci.yml/badge.svg)](https://github.com/Yashbhu/weave/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-This repo has the UDP transport (M1), the two-node TUN overlay (M2), multi-hop
-routing with static routes (M4), topology-driven routing with automatic failover
-(M5), authenticated endpoint migration with relay fallback (M6), and the M7
-hardening pass. Peers exchange link state, calculate routes with Dijkstra,
-switch to an alternate path when a link fails, authenticate each other with a
-Noise IK handshake, encrypt control messages, migrate a peer's UDP endpoint when
-an authenticated message says it moved, and fall back to a relay when a direct
-path is dead. M7 audited the implementation, fixed several correctness and
-security defects, and added fault-injection, lifecycle, rate-limiting, fuzzing
-and benchmark coverage.
+Weave is a peer-to-peer Layer-3 overlay network written in Rust. Peers build a
+virtual network on top of the physical one and exchange IP packets without a
+direct link between them.
 
-## The transport
+It ships the UDP transport, a two-node TUN overlay, multi-hop routing with
+static routes, topology-driven routing with automatic failover, authenticated
+endpoint migration with relay fallback, and a hardening pass (correctness and
+security fixes, fault injection, lifecycle probing, rate limiting, fuzzing,
+benchmarks). Peers exchange link state, calculate routes with Dijkstra, switch
+to an alternate path when a link fails, authenticate each other with a Noise IK
+handshake, encrypt control messages, migrate a peer's UDP endpoint when an
+authenticated message says it moved, and fall back to a relay when a direct
+path is dead.
 
-A small UDP transport that lets two processes exchange framed messages. Each
-process can:
+## Performance
 
-- bind to a UDP address (`--bind`),
-- send one message to a peer at startup (`--peer`),
-- receive datagrams and see who sent them,
-- drop malformed or oversized datagrams instead of crashing,
-- shut down on Ctrl+C.
+Measured on an Apple M-class laptop, macOS 15.5, `rustc` 1.91.1, `cargo bench
+--bench baseline` (loopback; see [BENCHMARKING.md](BENCHMARKING.md) for
+methodology and real-network runs).
 
-This is a local development transport, not the real wire protocol. It doesn't
-encrypt anything, doesn't guarantee delivery or ordering, and shouldn't be used
-outside local testing.
+### Hot paths (ns/op)
 
-## Frame layout
+| Path                         | 64 B  | 512 B | 1400 B |
+| ---------------------------- | ----- | ----- | ------ |
+| wire encode                  | 21.2  | 48.5  | 37.0   |
+| wire decode                  | 1.9   | 2.2   | 2.2    |
+| packet validate              | 2.2   | 3.7   | 2.2    |
+| hop-limit decrement          | 30.6  | 82.1  | 40.2   |
 
-Frames are a fixed 3-byte header followed by the payload:
+Single-node topology (1000 routes): route lookup 649.9 ns. Noise record layer
+(1400 B): seal 1537.8 ns, open 726.5 ns. Topology recomputation (128 nodes):
+27.5 µs.
+
+### End-to-end loopback (µs, pps, Mbps)
+
+Direct path:
+
+| Payload | RTT median | RTT p95 | pkt/s   | Mbps   |
+| ------- | ---------- | ------- | ------- | ------ |
+| 64 B    | 19.6 µs    | 47.2 µs | 288,101 | 147.5  |
+| 512 B   | 19.1 µs    | 33.5 µs | 253,736 | 1039.3 |
+| 1400 B  | 19.1 µs    | 39.6 µs | 247,157 | 2768.2 |
+
+Two-hop path (one relay node):
+
+| Payload | RTT median | RTT p95 | pkt/s  | Mbps  |
+| ------- | ---------- | ------- | ------ | ----- |
+| 64 B    | 28.0 µs    | 46.5 µs | 51,390 | 26.3  |
+| 512 B   | 29.7 µs    | 79.8 µs | 52,876 | 216.6 |
+| 1400 B  | 33.6 µs    | 82.0 µs | 52,980 | 593.4 |
+
+## Quick start
+
+```sh
+cargo build --release
+```
+
+Two nodes on loopback (message mode):
+
+```sh
+# terminal 1
+cargo run --release -- --bind 127.0.0.1:4000 --peer 127.0.0.1:4001
+
+# terminal 2
+cargo run --release -- --bind 127.0.0.1:4001 --peer 127.0.0.1:4000
+```
+
+Two nodes with a TUN overlay (root required for the TUN device):
+
+```sh
+# terminal 1
+sudo ./target/release/weave \
+  --bind 0.0.0.0:4000 \
+  --tun --address 10.77.0.1 --peer-address 10.77.0.2
+
+# terminal 2
+sudo ./target/release/weave \
+  --bind 0.0.0.0:4001 \
+  --tun --address 10.77.0.2 --peer-address 10.77.0.1
+
+# then, from either side
+ping 10.77.0.1
+```
+
+### Authenticated, encrypted control sessions
+
+Generate a keypair per node, then pass each node its own private key
+(`--identity`) and every neighbour's public key (`--peer-key`):
+
+```sh
+cargo run --release --bin weave -- --tun ... --identity <HEX>
+cargo run --release --bin weave -- --tun ... --peer-key 10.77.0.1=<HEX>
+```
+
+With `--identity` set, every neighbour must have a `--peer-key` entry. Control
+messages are encrypted with Noise IK; session keys are rotated. Data-plane
+packets are not yet encrypted.
+
+### Multi-hop and failover
+
+Static routes:
+
+```sh
+--route 10.77.0.3=203.0.113.7:4000
+```
+
+Dynamic topology (link-state, Dijkstra, automatic failover):
+
+```sh
+--neighbor 10.77.0.2=203.0.113.9:4000
+```
+
+Relay fallback (run any reachable node as a relay with `--serve-relay`, and
+point unreachable neighbours at it with `--relay <ADDR:PORT>`).
+
+## Benchmarks
+
+### Loopback micro-benchmarks
+
+```sh
+cargo bench --bench baseline
+```
+
+### weave-netbench (application-level, real or emulated networks)
+
+An echo benchmark that measures RTT, throughput, and loss end-to-end. When run
+through the overlay it traverses the TUN data plane, so it reflects what a real
+application sees:
+
+```sh
+# echo server on its overlay address (root)
+sudo ./target/release/weave --bind 0.0.0.0:4000 \
+  --tun --address 10.77.0.1 --peer-address 10.77.0.2
+
+# probe (root not required)
+./target/release/weave-netbench probe \
+  --target 10.77.0.1:4000 \
+  --sizes 64,512,1200,1400 \
+  --runs 5 --warmup 1 --csv results.csv
+```
 
 ```text
- 0        1                 2                2 + N
-+--------+--------+--------+------------------+
-| version|  payload length |     payload      |
-| 1 byte | 2 bytes big-end |   0..=N bytes    |
-+--------+--------+--------+------------------+
+payload   rtt_median     rtt_p95  rtt_loss    thr_pkt/s   thr_mbps  thr_loss
+   64B      40.0us      77.6us     0.00%     105776.7      54.16     0.00%
+  512B      33.8us     157.3us     0.00%      92560.0     379.13     0.00%
+ 1400B      31.6us      97.5us     0.00%      92476.7    1035.74     0.00%
 ```
 
-| Field            | Size    | Notes                                |
-| ---------------- | ------- | ------------------------------------ |
-| `version`        | 1 byte  | protocol version, `1` for now        |
-| `payload length` | 2 bytes | big-endian byte count of the payload |
-| `payload`        | 0–N     | message body                         |
+See [BENCHMARKING.md](BENCHMARKING.md) for the full methodology: baselines
+(iperf3, ping), multi-hop and relay scenarios, `tc netem` impairment tests
+(1%/5% loss, 50/100 ms delay, partition-and-heal), and the reproducibility
+checklist.
 
-Size limits:
-
-- biggest datagram: **1500 bytes** (`MAX_DATAGRAM_SIZE`) — keeps us under a
-  typical Ethernet MTU so we don't rely on IP fragmentation on a LAN
-- biggest payload: **1497 bytes** (`MAX_PAYLOAD_LEN` = 1500 − 3)
-
-On receive we drop anything that isn't a valid frame: too short, too big, wrong
-version, or a length that doesn't match the payload.
-
-## Running two peers
-
-Build once:
-
-```sh
-cargo build
-```
-
-Then, in terminal 1, start the first node (listen on 4000, message peer on 4001):
-
-```sh
-cargo run -- --bind 127.0.0.1:4000 --peer 127.0.0.1:4001
-```
-
-In terminal 2, start the second node (listen on 4001, message peer on 4000):
-
-```sh
-cargo run -- --bind 127.0.0.1:4001 --peer 127.0.0.1:4000
-```
-
-Each node sends one message at startup and logs a `received message` line when it
-gets a datagram. Ctrl+C stops a node and the receive task exits.
-
-CLI options:
+## CLI
 
 ```text
---bind <ADDR:PORT>   local UDP address to bind (required)
---peer <ADDR:PORT>   peer endpoint, repeatable (message mode sends to the first)
---tun                 run the TUN overlay instead of message mode
---address <IP>        this node's overlay address (with --tun)
---peer-address <IP>   the peer's overlay address (with --tun)
---route <P=ADDR:PORT> static route, repeatable (with --tun)
+--bind <ADDR:PORT>      local UDP address to bind (required)
+--peer <ADDR:PORT>      peer endpoint, repeatable (message mode)
+--tun                   run the TUN overlay instead of message mode
+--address <IP>          this node's overlay address (with --tun)
+--peer-address <IP>     the peer's overlay address (with --tun)
+--route <P=ADDR:PORT>   static route, repeatable (with --tun)
 --neighbor <IP=ADDR:PORT> topology neighbour, repeatable; enables dynamic
-                      routing and automatic failover (with --tun)
---heartbeat-ms <N>    control-plane heartbeat interval (with --tun)
---link-timeout-ms <N> how long a silent neighbour is trusted (with --tun)
---identity <HEX>      this node's long-term private key; enables authenticated,
-                      encrypted control sessions (with --tun)
---peer-key <IP=HEX>   a neighbour's static public key, repeatable; required for
-                      every neighbour when --identity is set (with --tun)
---relay <ADDR:PORT>   relay to fall back to when a neighbour is unreachable
-                      (with --tun)
---serve-relay         forward relay envelopes for neighbours; run this node as a
-                      relay (with --tun)
+                        routing and automatic failover (with --tun)
+--heartbeat-ms <N>      control-plane heartbeat interval (with --tun)
+--link-timeout-ms <N>   how long a silent neighbour is trusted (with --tun)
+--identity <HEX>        this node's long-term private key; enables
+                        authenticated, encrypted control sessions (with --tun)
+--peer-key <IP=HEX>     a neighbour's static public key, repeatable; required
+                        for every neighbour when --identity is set (with --tun)
+--relay <ADDR:PORT>     relay to fall back to when a neighbour is unreachable
+                        (with --tun)
+--serve-relay           forward relay envelopes; run as a relay (with --tun)
 --control-rate-limit <N> control messages per second accepted from one source
-                      (default 32; 0 disables; with --tun)
---mtu <N>             overlay MTU (default 1420; with --tun)
---queue-depth <N>     packets buffered per direction (default 1024; with --tun)
--h, --help            print help
--V, --version         print version
+                        (default 32; 0 disables; with --tun)
+--mtu <N>               overlay MTU (default 1420; with --tun)
+--queue-depth <N>       packets buffered per direction (default 1024; with --tun)
+-h, --help              print help
+-V, --version           print version
 ```
+
+## Wire format
+
+Each datagram is a small frame: a 3-byte header (version + 16-bit big-endian
+payload length) followed by the payload. Largest datagram: 1500 bytes
+(`MAX_DATAGRAM_SIZE`); largest payload: 1497 bytes. On receive, anything that
+isn't a valid frame is dropped, not fatal.
 
 ## Development
-
-Format, lint, test, and benchmark:
 
 ```sh
 cargo fmt --all
@@ -120,15 +200,12 @@ cargo test
 cargo bench --bench baseline
 ```
 
-Tests live beside the modules in `src/` (`wire`, `packet`, `route`, `forward`,
-`peer`, `noise`, `rate`, `lifecycle`, `endpoints`, `relay`, `overlay`,
-`topology`, `control`, `router`) and in `tests/` (`transport.rs`, `routing.rs`,
-`topology.rs`, `connectivity.rs`, `fuzz.rs`, and the root-only `tun_open.rs`).
-They use random free ports, a fake TUN, and short timeouts. `topology.rs`
-includes a deterministic no-sleep simulation of failover and of a full
-partition-and-heal; `fuzz.rs` is a deterministic mutational fuzzer over every
-wire-facing decoder. `benches/baseline.rs` measures the pure hot paths, the
-Noise record layer, and loopback end-to-end paths (direct and two-hop).
+Tests live beside the modules in `src/` and in `tests/` (`transport.rs`,
+`routing.rs`, `topology.rs`, `connectivity.rs`, `fuzz.rs`, and the root-only
+`tun_open.rs`). They use random free ports, a fake TUN, and short timeouts.
+`topology.rs` includes deterministic no-sleep simulations of failover and of a
+full partition-and-heal; `fuzz.rs` is a deterministic mutational fuzzer over
+every wire-facing decoder.
 
 ## Not done yet
 
@@ -138,10 +215,9 @@ Noise record layer, and loopback end-to-end paths (direct and two-hop).
 - no delivery, ordering, or duplicate protection
 - peer addresses are set by hand, no discovery
 - convergence is eventual, not instantaneous or strongly consistent
-- NAT traversal is heuristic (advertised endpoint candidates plus relay fallback),
-  not a full ICE-style negotiation
-- the frame format is a placeholder and will change
+- NAT traversal is heuristic (advertised endpoint candidates plus relay
+  fallback), not a full ICE-style negotiation
 
 ## License
 
-MIT OR Apache-2.0.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

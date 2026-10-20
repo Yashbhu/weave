@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Weave - a peer-to-peer Layer-3 overlay network"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 publish = false
 
 [lib]
@@ -14,6 +14,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "weave"
 path = "src/main.rs"
+
+[[bin]]
+name = "weave-netbench"
+path = "src/bin/weave-netbench.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time", "io-util"] }
@@ -27,6 +31,7 @@ snow = "0.9"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 chacha20poly1305 = "0.10"
 getrandom = "0.2"
+libc = "0.2"
 
 [[bench]]
 name = "baseline"
