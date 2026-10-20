@@ -61,9 +61,14 @@ impl TunDevice {
             .netmask(config.netmask)
             .mtu(config.mtu)
             .up();
+        // enable_routing is macOS-only in the tun crate; Linux configures
+        // routes outside the library.
+        #[cfg(target_os = "macos")]
         tun_config.platform_config(|platform| {
             platform.enable_routing(config.enable_routing);
         });
+        #[cfg(not(target_os = "macos"))]
+        let _ = config.enable_routing;
 
         let device = tun::create_as_async(&tun_config).map_err(io::Error::other)?;
         Ok(Self { device })
