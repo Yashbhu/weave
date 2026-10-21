@@ -41,11 +41,6 @@ impl PeerState {
             PeerState::Disconnected => "disconnected",
         }
     }
-
-    /// is traffic usable in this state?
-    pub fn is_live(self) -> bool {
-        !matches!(self, PeerState::Disconnected)
-    }
 }
 
 /// timers for the lifecycle.

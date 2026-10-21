@@ -116,13 +116,6 @@ pub enum Applied {
     Invalid(RejectReason),
 }
 
-impl Applied {
-    /// whether the usable graph may have changed and routes should be recomputed.
-    pub fn is_change(self) -> bool {
-        matches!(self, Applied::New)
-    }
-}
-
 /// why an advertisement was rejected outright.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
@@ -312,11 +305,6 @@ impl Topology {
     /// the current state of a local link, if it exists.
     pub fn local_state(&self, to: NodeId) -> Option<LinkState> {
         self.local_links.get(&to).map(|link| link.state)
-    }
-
-    /// every local neighbour identity.
-    pub fn local_neighbors(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.local_links.keys().copied()
     }
 
     /// originate a fresh advertisement for one local link, bumping its sequence.

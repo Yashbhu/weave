@@ -85,11 +85,6 @@ impl PublicKey {
         &self.0
     }
 
-    /// build from raw bytes.
-    pub fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
-        Self(bytes)
-    }
-
     /// lowercase hex.
     pub fn to_hex(self) -> String {
         to_hex(&self.0)

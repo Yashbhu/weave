@@ -162,6 +162,7 @@ checklist.
 --bind <ADDR:PORT>      local UDP address to bind (required)
 --peer <ADDR:PORT>      peer endpoint, repeatable (message mode)
 --tun                   run the TUN overlay instead of message mode
+--tun-name <NAME>       requested TUN interface name (with --tun)
 --address <IP>          this node's overlay address (with --tun)
 --peer-address <IP>     the peer's overlay address (with --tun)
 --route <P=ADDR:PORT>   static route, repeatable (with --tun)
